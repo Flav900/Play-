@@ -50,9 +50,13 @@ public class MainActivity extends Activity
 	{
 		File currentDirectoryFile = new File(getCurrentDirectory());
 		File parentDirectoryFile = currentDirectoryFile.getParentFile();
-		if(parentDirectoryFile == null) return;
-		setCurrentDirectory(currentDirectoryFile.getParentFile().getAbsolutePath());
-		updateFileListView();
+		if(parentDirectoryFile == null) {
+			finish();
+		} else {
+			setCurrentDirectory(currentDirectoryFile.getParentFile().getAbsolutePath());
+			updateFileListView();
+		}
+		
 	}
 
 	private static long getBuildDate(Context context) 
@@ -126,6 +130,9 @@ public class MainActivity extends Activity
 			return true;
 		case R.id.main_menu_about:
 			displayAboutDialog();
+			return true;
+		case R.id.main_menu_exit:
+			finish();
 			return true;
 		default:
 			return super.onOptionsItemSelected(item);
