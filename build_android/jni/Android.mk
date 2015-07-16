@@ -34,33 +34,59 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE			:= libPlay
 LOCAL_SRC_FILES			:=	../../Source/AppConfig.cpp \
-							../../Source/androidui/GSH_OpenGLAndroid.cpp \
-							../../Source/androidui/NativeInterop.cpp \
 							../../Source/BasicBlock.cpp \
+							../../Source/ControllerInfo.cpp \
 							../../Source/COP_FPU.cpp \
 							../../Source/COP_FPU_Reflection.cpp \
 							../../Source/COP_SCU.cpp \
 							../../Source/COP_SCU_Reflection.cpp \
-							../../Source/COP_VU.cpp \
-							../../Source/COP_VU_Reflection.cpp \
 							../../Source/CsoImageStream.cpp \
-							../../Source/DMAC.cpp \
-							../../Source/Dmac_Channel.cpp \
-							../../Source/Ee_SubSystem.cpp \
-							../../Source/EEAssembler.cpp \
+							../../Source/ee/COP_VU.cpp \
+							../../Source/ee/COP_VU_Reflection.cpp \
+							../../Source/ee/DMAC.cpp \
+							../../Source/ee/Dmac_Channel.cpp \
+							../../Source/ee/Ee_SubSystem.cpp \
+							../../Source/ee/EEAssembler.cpp \
+							../../Source/ee/EeExecutor.cpp \
+							../../Source/ee/FpAddTruncate.cpp \
+							../../Source/ee/FpMulTruncate.cpp \
+							../../Source/ee/GIF.cpp \
+							../../Source/ee/INTC.cpp \
+							../../Source/ee/IPU.cpp \
+							../../Source/ee/IPU_DmVectorTable.cpp \
+							../../Source/ee/IPU_MacroblockAddressIncrementTable.cpp \
+							../../Source/ee/IPU_MacroblockTypeBTable.cpp \
+							../../Source/ee/IPU_MacroblockTypeITable.cpp \
+							../../Source/ee/IPU_MacroblockTypePTable.cpp \
+							../../Source/ee/IPU_MotionCodeTable.cpp \
+							../../Source/ee/MA_EE.cpp \
+							../../Source/ee/MA_EE_Reflection.cpp \
+							../../Source/ee/MA_VU.cpp \
+							../../Source/ee/MA_VU_Lower.cpp \
+							../../Source/ee/MA_VU_LowerReflection.cpp \
+							../../Source/ee/MA_VU_Upper.cpp \
+							../../Source/ee/MA_VU_UpperReflection.cpp \
+							../../Source/ee/PS2OS.cpp \
+							../../Source/ee/SIF.cpp \
+							../../Source/ee/Timer.cpp \
+							../../Source/ee/Vif.cpp \
+							../../Source/ee/Vif1.cpp \
+							../../Source/ee/Vpu.cpp \
+							../../Source/ee/VuAnalysis.cpp \
+							../../Source/ee/VuBasicBlock.cpp \
+							../../Source/ee/VuExecutor.cpp \
+							../../Source/ee/VUShared.cpp \
+							../../Source/ee/VUShared_Reflection.cpp \
 							../../Source/ELF.cpp \
 							../../Source/ElfFile.cpp \
-							../../Source/FpMulTruncate.cpp \
 							../../Source/FrameDump.cpp \
-							../../Source/GIF.cpp \
-							../../Source/GSHandler.cpp \
-							../../Source/GSH_Null.cpp \
-							../../Source/GSH_OpenGL.cpp \
-							../../Source/GSH_OpenGL_Shader.cpp \
-							../../Source/GSH_OpenGL_Texture.cpp \
-							../../Source/GsCachedArea.cpp \
-							../../Source/GsPixelFormats.cpp \
-							../../Source/INTC.cpp \
+							../../Source/gs/GsCachedArea.cpp \
+							../../Source/gs/GSH_Null.cpp \
+							../../Source/gs/GSHandler.cpp \
+							../../Source/gs/GSH_OpenGL/GSH_OpenGL.cpp \
+							../../Source/gs/GSH_OpenGL/GSH_OpenGL_Shader.cpp \
+							../../Source/gs/GSH_OpenGL/GSH_OpenGL_Texture.cpp \
+							../../Source/gs/GsPixelFormats.cpp \
 							../../Source/iop/ArgumentIterator.cpp \
 							../../Source/iop/DirectoryDevice.cpp \
 							../../Source/iop/Iop_Cdvdfsv.cpp \
@@ -109,25 +135,11 @@ LOCAL_SRC_FILES			:=	../../Source/AppConfig.cpp \
 							../../Source/ISO9660/PathTable.cpp \
 							../../Source/ISO9660/PathTableRecord.cpp \
 							../../Source/ISO9660/VolumeDescriptor.cpp \
-							../../Source/IPU.cpp \
-							../../Source/IPU_DmVectorTable.cpp \
-							../../Source/IPU_MacroblockAddressIncrementTable.cpp \
-							../../Source/IPU_MacroblockTypeBTable.cpp \
-							../../Source/IPU_MacroblockTypeITable.cpp \
-							../../Source/IPU_MacroblockTypePTable.cpp \
-							../../Source/IPU_MotionCodeTable.cpp \
 							../../Source/IszImageStream.cpp \
 							../../Source/Log.cpp \
-							../../Source/MA_EE.cpp \
-							../../Source/MA_EE_Reflection.cpp \
 							../../Source/MA_MIPSIV.cpp \
 							../../Source/MA_MIPSIV_Reflection.cpp \
 							../../Source/MA_MIPSIV_Templates.cpp \
-							../../Source/MA_VU.cpp \
-							../../Source/MA_VU_Lower.cpp \
-							../../Source/MA_VU_LowerReflection.cpp \
-							../../Source/MA_VU_Upper.cpp \
-							../../Source/MA_VU_UpperReflection.cpp \
 							../../Source/MailBox.cpp \
 							../../Source/MemoryMap.cpp \
 							../../Source/MemoryStateFile.cpp \
@@ -145,30 +157,29 @@ LOCAL_SRC_FILES			:=	../../Source/AppConfig.cpp \
 							../../Source/PadHandler.cpp \
 							../../Source/PadListener.cpp \
 							../../Source/Profiler.cpp \
-							../../Source/PS2OS.cpp \
 							../../Source/PS2VM.cpp \
 							../../Source/RegisterStateFile.cpp \
-							../../Source/SIF.cpp \
 							../../Source/StructCollectionStateFile.cpp \
 							../../Source/StructFile.cpp \
-							../../Source/Timer.cpp \
-							../../Source/Utils.cpp \
-							../../Source/VIF.cpp \
-							../../Source/VPU.cpp \
-							../../Source/VPU1.cpp \
-							../../Source/VuAnalysis.cpp \
-							../../Source/VuBasicBlock.cpp \
-							../../Source/VuExecutor.cpp \
-							../../Source/VUShared.cpp \
-							../../Source/VUShared_Reflection.cpp
-LOCAL_CFLAGS			:= -Wno-extern-c-compat -D_IOP_EMULATE_MODULES -DDISABLE_LOGGING -DGLES_COMPATIBILITY
+							../../Source/ui_android/GSH_OpenGLAndroid.cpp \
+							../../Source/ui_android/InputManager.cpp \
+							../../Source/ui_android/NativeInterop.cpp \
+							../../Source/ui_android/NativeShared.cpp \
+							../../Source/ui_android/PH_Android.cpp \
+							../../Source/ui_android/SettingsManager.cpp \
+							../../Source/ui_android/StatsManager.cpp \
+							../../Source/Utils.cpp
+LOCAL_CFLAGS			:= -mcpu=cortex-a7 -Wno-extern-c-compat -D_IOP_EMULATE_MODULES -DDISABLE_LOGGING -DGLES_COMPATIBILITY
 LOCAL_C_INCLUDES		:= $(BOOST_PATH) $(DEPENDENCIES_PATH)/bzip2-1.0.6 $(FRAMEWORK_PATH)/include $(CODEGEN_PATH)/include $(LOCAL_PATH)/../../include
 LOCAL_CPP_FEATURES		:= exceptions rtti
 LOCAL_LDLIBS 			:= -landroid -llog -lGLESv3 -lEGL -lz
-LOCAL_STATIC_LIBRARIES	:= libCodeGen libFramework libbzip2 libboost
+LOCAL_STATIC_LIBRARIES	:= libCodeGen libFramework libbzip2 libboost cpufeatures
+LOCAL_ARM_NEON			:= true
 
 ifeq ($(APP_OPTIM),debug)
 LOCAL_CFLAGS			+= -D_DEBUG
 endif
 
 include $(BUILD_SHARED_LIBRARY)
+
+$(call import-module,android/cpufeatures)

@@ -1,5 +1,4 @@
-#ifndef _SPU2_CORE_H_
-#define _SPU2_CORE_H_
+#pragma once
 
 #include <string>
 #include <functional>
@@ -35,8 +34,16 @@ namespace Iop
 				VP_VOLXL		= 0x1F90000C,
 				VP_VOLXR		= 0x1F90000E,
 				S_REG_BASE		= 0x1F900180,
+				S_PMON_HI		= 0x1F900180,
+				S_PMON_LO		= 0x1F900182,
+				S_NON_HI		= 0x1F900184,
+				S_NON_LO		= 0x1F900186,
 				S_VMIXL_HI		= 0x1F900188,
 				S_VMIXL_LO		= 0x1F90018A,
+				S_VMIXEL_HI		= 0x1F90018C,
+				S_VMIXEL_LO		= 0x1F90018E,
+				S_VMIXR_HI		= 0x1F900190,
+				S_VMIXR_LO		= 0x1F900192,
 				S_VMIXER_HI		= 0x1F900194,
 				S_VMIXER_LO		= 0x1F900196,
 				CORE_ATTR		= 0x1F90019A,
@@ -49,7 +56,7 @@ namespace Iop
 				A_TSA_HI		= 0x1F9001A8,
 				A_TSA_LO		= 0x1F9001AA,
 				A_STD			= 0x1F9001AC,
-				A_STREAM		= 0x1F9001B0,
+				A_TS_MODE		= 0x1F9001B0,
 				VA_REG_BASE		= 0x1F9001C0,
 				VA_SSA_HI		= 0x1F9001C0,
 				VA_SSA_LO		= 0x1F9001C2,
@@ -106,11 +113,8 @@ namespace Iop
 			REGISTER_DISPATCH_INFO	m_readDispatch;
 			REGISTER_DISPATCH_INFO	m_writeDispatch;
 			unsigned int			m_coreId;
-			uint16					m_streamStatus;
 			std::string				m_logName;
 			CSpuBase&				m_spuBase;
 		};
 	};
 };
-
-#endif

@@ -1,8 +1,9 @@
 #include <cassert>
 #include <cmath>
+#include "string_format.h"
 #include "../Log.h"
-#include "Iop_SpuBase.h"
 #include "../RegisterStateFile.h"
+#include "Iop_SpuBase.h"
 
 using namespace Iop;
 
@@ -10,10 +11,27 @@ using namespace Iop;
 #define TIME_SCALE (0x1000)
 #define LOG_NAME ("iop_spubase")
 
-#define STATE_PREFIX			("iop_spu/spu_")
-#define STATE_SUFFIX			(".xml")
-#define STATE_REGS_CTRL			("CTRL")
-#define STATE_REGS_IRQADDR		("IRQADDR")
+#define STATE_PATH_FORMAT					("iop_spu/spu_%d.xml")
+#define STATE_REGS_CTRL						("CTRL")
+#define STATE_REGS_IRQADDR					("IRQADDR")
+#define STATE_REGS_TRANSFERADDR				("TRANSFERADDR")
+#define STATE_REGS_TRANSFERMODE				("TRANSFERMODE")
+#define STATE_REGS_REVERBWORKADDRSTART		("REVERBWORKADDRSTART")
+#define STATE_REGS_REVERBWORKADDREND		("REVERBWORKADDREND")
+#define STATE_REGS_REVERBCURRADDR			("REVERBCURRADDR")
+#define STATE_CHANNEL_REGS_PREFIX			("CHANNEL%d_")
+#define STATE_CHANNEL_REGS_VOLUMELEFT		("VOLUMELEFT")
+#define STATE_CHANNEL_REGS_VOLUMERIGHT		("VOLUMERIGHT")
+#define STATE_CHANNEL_REGS_VOLUMELEFTABS	("VOLUMELEFTABS")
+#define STATE_CHANNEL_REGS_VOLUMERIGHTABS	("VOLUMERIGHTABS")
+#define STATE_CHANNEL_REGS_STATUS			("STATUS")
+#define STATE_CHANNEL_REGS_PITCH			("PITCH")
+#define STATE_CHANNEL_REGS_ADSRLEVEL		("ADSRLEVEL")
+#define STATE_CHANNEL_REGS_ADSRRATE			("ADSRRATE")
+#define STATE_CHANNEL_REGS_ADSRVOLUME		("ADSRVOLUME")
+#define STATE_CHANNEL_REGS_ADDRESS			("ADDRESS")
+#define STATE_CHANNEL_REGS_REPEAT			("REPEAT")
+#define STATE_CHANNEL_REGS_CURRENT			("CURRENT")
 
 bool CSpuBase::g_reverbParamIsAddress[REVERB_PARAM_COUNT] =
 {
@@ -96,7 +114,6 @@ CSpuBase::CSpuBase(uint8* ram, uint32 ramSize, unsigned int spuNumber)
 , m_ramSize(ramSize)
 , m_spuNumber(spuNumber)
 , m_reverbEnabled(true)
-, m_streamingEnabled(false)
 {
 	Reset();
 
@@ -134,7 +151,6 @@ CSpuBase::~CSpuBase()
 
 void CSpuBase::Reset()
 {
-	m_streamingEnabled = false;
 	m_ctrl = 0;
 
 	m_volumeAdjust = 1.0f;
@@ -144,7 +160,8 @@ void CSpuBase::Reset()
 	m_reverbTicks = 0;
 	m_irqAddr = 0;
 	m_irqPending = false;
-	m_bufferAddr = 0;
+	m_transferMode = 0;
+	m_transferAddr = 0;
 
 	m_reverbCurrAddr = 0;
 	m_reverbWorkAddrStart = 0;
@@ -157,25 +174,81 @@ void CSpuBase::Reset()
 	for(unsigned int i = 0; i < MAX_CHANNEL; i++)
 	{
 		m_reader[i].Reset();
+		m_reader[i].SetMemory(m_ram, m_ramSize);
 	}
 }
 
 void CSpuBase::LoadState(Framework::CZipArchiveReader& archive)
 {
-	std::string path = STATE_PREFIX + std::to_string(m_spuNumber) + STATE_SUFFIX;
+	auto path = string_format(STATE_PATH_FORMAT, m_spuNumber);
 
 	CRegisterStateFile registerFile(*archive.BeginReadFile(path.c_str()));
 	m_ctrl = registerFile.GetRegister32(STATE_REGS_CTRL);
 	m_irqAddr = registerFile.GetRegister32(STATE_REGS_IRQADDR);
+	m_transferMode = registerFile.GetRegister32(STATE_REGS_TRANSFERMODE);
+	m_transferAddr = registerFile.GetRegister32(STATE_REGS_TRANSFERADDR);
+	m_reverbWorkAddrStart = registerFile.GetRegister32(STATE_REGS_REVERBWORKADDRSTART);
+	m_reverbWorkAddrEnd = registerFile.GetRegister32(STATE_REGS_REVERBWORKADDREND);
+	m_reverbCurrAddr = registerFile.GetRegister32(STATE_REGS_REVERBCURRADDR);
+
+	for(unsigned int i = 0; i < MAX_CHANNEL; i++)
+	{
+		auto& channel = m_channel[i];
+		auto channelPrefix = string_format(STATE_CHANNEL_REGS_PREFIX, i);
+		channel.volumeLeft <<= registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_VOLUMELEFT).c_str());
+		channel.volumeRight <<= registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_VOLUMERIGHT).c_str());
+		channel.volumeLeftAbs = registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_VOLUMELEFTABS).c_str());
+		channel.volumeRightAbs = registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_VOLUMERIGHTABS).c_str());
+		channel.status = registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_STATUS).c_str());
+		channel.pitch = registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_PITCH).c_str());
+		channel.adsrLevel <<= registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_ADSRLEVEL).c_str());
+		channel.adsrRate <<= registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_ADSRRATE).c_str());
+		channel.adsrVolume = registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_ADSRVOLUME).c_str());
+		channel.address = registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_ADDRESS).c_str());
+		channel.repeat = registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_REPEAT).c_str());
+		channel.current = registerFile.GetRegister32((channelPrefix + STATE_CHANNEL_REGS_CURRENT).c_str());
+
+		//Reset reader (not actually ok, but better than nothing)
+		auto& reader = m_reader[i];
+		reader.Reset();
+		if((channel.status != STOPPED) && (channel.status != KEY_ON))
+		{
+			reader.SetParams(channel.address, channel.repeat);
+		}
+	}
 }
 
 void CSpuBase::SaveState(Framework::CZipArchiveWriter& archive)
 {
-	std::string path = STATE_PREFIX + std::to_string(m_spuNumber) + STATE_SUFFIX;
+	auto path = string_format(STATE_PATH_FORMAT, m_spuNumber);
 
 	CRegisterStateFile* registerFile = new CRegisterStateFile(path.c_str());
 	registerFile->SetRegister32(STATE_REGS_CTRL, m_ctrl);
 	registerFile->SetRegister32(STATE_REGS_IRQADDR, m_irqAddr);
+	registerFile->SetRegister32(STATE_REGS_TRANSFERMODE, m_transferMode);
+	registerFile->SetRegister32(STATE_REGS_TRANSFERADDR, m_transferAddr);
+	registerFile->SetRegister32(STATE_REGS_REVERBWORKADDRSTART, m_reverbWorkAddrStart);
+	registerFile->SetRegister32(STATE_REGS_REVERBWORKADDREND, m_reverbWorkAddrEnd);
+	registerFile->SetRegister32(STATE_REGS_REVERBCURRADDR, m_reverbCurrAddr);
+
+	for(unsigned int i = 0; i < MAX_CHANNEL; i++)
+	{
+		const auto& channel = m_channel[i];
+		auto channelPrefix = string_format(STATE_CHANNEL_REGS_PREFIX, i);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_VOLUMELEFT).c_str(), channel.volumeLeft);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_VOLUMERIGHT).c_str(), channel.volumeRight);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_VOLUMELEFTABS).c_str(), channel.volumeLeftAbs);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_VOLUMERIGHTABS).c_str(), channel.volumeRightAbs);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_STATUS).c_str(), channel.status);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_PITCH).c_str(), channel.pitch);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_ADSRLEVEL).c_str(), channel.adsrLevel);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_ADSRRATE).c_str(), channel.adsrRate);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_ADSRVOLUME).c_str(), channel.adsrVolume);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_ADDRESS).c_str(), channel.address);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_REPEAT).c_str(), channel.repeat);
+		registerFile->SetRegister32((channelPrefix + STATE_CHANNEL_REGS_CURRENT).c_str(), channel.current);
+	}
+
 	archive.InsertFile(registerFile);
 }
 
@@ -192,11 +265,6 @@ void CSpuBase::SetVolumeAdjust(float volumeAdjust)
 void CSpuBase::SetReverbEnabled(bool enabled)
 {
 	m_reverbEnabled = enabled;
-}
-
-void CSpuBase::SetStreamingEnabled(bool enabled)
-{
-	m_streamingEnabled = enabled;
 }
 
 uint16 CSpuBase::GetControl() const
@@ -233,14 +301,24 @@ void CSpuBase::SetIrqAddress(uint32 value)
 	m_irqAddr = value & (m_ramSize - 1);
 }
 
+uint16 CSpuBase::GetTransferMode() const
+{
+	return m_transferMode;
+}
+
+void CSpuBase::SetTransferMode(uint16 transferMode)
+{
+	m_transferMode = transferMode;
+}
+
 uint32 CSpuBase::GetTransferAddress() const
 {
-	return m_bufferAddr;
+	return m_transferAddr;
 }
 
 void CSpuBase::SetTransferAddress(uint32 value)
 {
-	m_bufferAddr = value & (m_ramSize - 1);
+	m_transferAddr = value & (m_ramSize - 1);
 }
 
 UNION32_16 CSpuBase::GetChannelOn() const
@@ -377,24 +455,27 @@ uint32 CSpuBase::ReceiveDma(uint8* buffer, uint32 blockSize, uint32 blockAmount)
 {
 #ifdef _DEBUG
 	CLog::GetInstance().Print(LOG_NAME, "Receiving DMA transfer to 0x%0.8X. Size = 0x%0.8X bytes.\r\n", 
-		m_bufferAddr, blockSize * blockAmount);
+		m_transferAddr, blockSize * blockAmount);
 #endif
-	if(m_streamingEnabled)
+	if(m_transferMode != TRANSFER_MODE_VOICE)
 	{
+		//CORE0/1 block modes should have transferAddr == 0
 		blockAmount = 1;
+		return blockAmount;
 	}
 	if((m_ctrl & CONTROL_DMA) == CONTROL_DMA_READ)
 	{
 		//DMA reads need to be throttled to allow FFX IopSoundDriver to properly synchronize itself
 		blockAmount = std::min<uint32>(blockAmount, 0x10);
+		return blockAmount;
 	}
 	unsigned int blocksTransfered = 0;
 	for(unsigned int i = 0; i < blockAmount; i++)
 	{
-		uint32 copySize = std::min<uint32>(m_ramSize - m_bufferAddr, blockSize);
-		memcpy(m_ram + m_bufferAddr, buffer, copySize);
-		m_bufferAddr += blockSize;
-		m_bufferAddr &= m_ramSize - 1;
+		uint32 copySize = std::min<uint32>(m_ramSize - m_transferAddr, blockSize);
+		memcpy(m_ram + m_transferAddr, buffer, copySize);
+		m_transferAddr += blockSize;
+		m_transferAddr &= m_ramSize - 1;
 		buffer += blockSize;
 		blocksTransfered++;
 	}
@@ -403,9 +484,9 @@ uint32 CSpuBase::ReceiveDma(uint8* buffer, uint32 blockSize, uint32 blockAmount)
 
 void CSpuBase::WriteWord(uint16 value)
 {
-	assert((m_bufferAddr + 1) < m_ramSize);
-	*reinterpret_cast<uint16*>(&m_ram[m_bufferAddr]) = value;
-	m_bufferAddr += 2;
+	assert((m_transferAddr + 1) < m_ramSize);
+	*reinterpret_cast<uint16*>(&m_ram[m_transferAddr]) = value;
+	m_transferAddr += 2;
 }
 
 int32 CSpuBase::ComputeChannelVolume(const CHANNEL_VOLUME& volume, int32 currentVolume)
@@ -470,7 +551,7 @@ void CSpuBase::Render(int16* samples, unsigned int sampleCount, unsigned int sam
 			CSampleReader& reader(m_reader[i]);
 			if(channel.status == KEY_ON)
 			{
-				reader.SetParams(m_ram + channel.address, m_ram + channel.repeat);
+				reader.SetParams(channel.address, channel.repeat);
 				reader.ClearEndFlag();
 				channel.status = ATTACK;
 				channel.adsrVolume = 0;
@@ -485,28 +566,26 @@ void CSpuBase::Render(int16* samples, unsigned int sampleCount, unsigned int sam
 				}
 				if(reader.DidChangeRepeat())
 				{
-					uint8* repeat = reader.GetRepeat();
-					channel.repeat = static_cast<uint32>(repeat - m_ram);
+					channel.repeat = reader.GetRepeat();
 					reader.ClearDidChangeRepeat();
 				}
 				//Update repeat in case it has been changed externally (needed for FFX)
-				reader.SetRepeat(m_ram + channel.repeat);
+				reader.SetRepeat(channel.repeat);
 			}
 
-			uint32 prevAddress = channel.current;
+			reader.SetIrqAddress(m_irqAddr);
 
 			int16 readSample = 0;
-			//We need to check if pitch is 0 here because FFX does that for its voice overs
-			reader.SetPitch(m_baseSamplingRate, (channel.pitch != 0) ? channel.pitch : 0x1000);
+			reader.SetPitch(m_baseSamplingRate, channel.pitch);
 			reader.GetSamples(&readSample, 1, sampleRate);
-			channel.current = static_cast<uint32>(reader.GetCurrent() - m_ram);
+			channel.current = reader.GetCurrent();
 
-			//TODO: Improve address detection (used by DW5, SW2, OW2 in movie playback)
-			if((m_ctrl & CONTROL_IRQ) && (m_irqAddr != 0) && (prevAddress != 0) && (prevAddress != channel.current) &&
-				(m_irqAddr >= prevAddress) && (m_irqAddr <= channel.current))
+			if((m_ctrl & CONTROL_IRQ) && reader.GetIrqPending())
 			{
 				m_irqPending = true;
 			}
+
+			reader.ClearIrqPending();
 
 			//Mix samples
 			UpdateAdsr(channel);
@@ -814,7 +893,6 @@ void CSpuBase::UpdateAdsr(CHANNEL& channel)
 ///////////////////////////////////////////////////////
 
 CSpuBase::CSampleReader::CSampleReader()
-: m_nextSample(NULL)
 {
 	Reset();
 }
@@ -826,8 +904,9 @@ CSpuBase::CSampleReader::~CSampleReader()
 
 void CSpuBase::CSampleReader::Reset()
 {
-	m_nextSample = NULL;
-	m_repeat = NULL;
+	m_nextSampleAddr = 0;
+	m_repeatAddr = 0;
+	m_irqAddr = 0;
 	memset(m_buffer, 0, sizeof(m_buffer));
 	m_pitch = 0;
 	m_srcSampleIdx = 0;
@@ -838,13 +917,21 @@ void CSpuBase::CSampleReader::Reset()
 	m_didChangeRepeat = false;
 	m_nextValid = false;
 	m_endFlag = false;
+	m_irqPending = false;
 }
 
-void CSpuBase::CSampleReader::SetParams(uint8* address, uint8* repeat)
+void CSpuBase::CSampleReader::SetMemory(uint8* ram, uint32 ramSize)
+{
+	m_ram = ram;
+	m_ramSize = ramSize;
+	assert((ramSize & (ramSize - 1)) == 0);
+}
+
+void CSpuBase::CSampleReader::SetParams(uint32 address, uint32 repeat)
 {
 	m_srcSampleIdx = 0;
-	m_nextSample = address;
-	m_repeat = repeat;
+	m_nextSampleAddr = address;
+	m_repeatAddr = repeat;
 	m_s1 = 0;
 	m_s2 = 0;
 	m_nextValid = false;
@@ -860,7 +947,6 @@ void CSpuBase::CSampleReader::SetPitch(uint32 baseSamplingRate, uint16 pitch)
 
 void CSpuBase::CSampleReader::GetSamples(int16* samples, unsigned int sampleCount, unsigned int dstSamplingRate)
 {
-	assert(m_nextSample != NULL);
 	for(unsigned int i = 0; i < sampleCount; i++)
 	{
 		samples[i] = GetSample(dstSamplingRate);
@@ -901,26 +987,33 @@ void CSpuBase::CSampleReader::AdvanceBuffer()
 
 void CSpuBase::CSampleReader::UnpackSamples(int16* dst)
 {
-	int32 workBuffer[28];
-
-	//Read header
-	uint8 shiftFactor = m_nextSample[0] & 0xF;
-	uint8 predictNumber = m_nextSample[0] >> 4;
-	uint8 flags = m_nextSample[1];
-	assert(predictNumber < 5);
-
 	if(m_done)
 	{
-		memset(m_buffer, 0, sizeof(int16) * BUFFER_SAMPLES);
+		memset(dst, 0, sizeof(int16) * BUFFER_SAMPLES);
 		return;
 	}
+
+	int32 workBuffer[BUFFER_SAMPLES];
+
+	uint8* nextSample = m_ram + m_nextSampleAddr;
+
+	if(m_nextSampleAddr == m_irqAddr)
+	{
+		m_irqPending = true;
+	}
+
+	//Read header
+	uint8 shiftFactor = nextSample[0] & 0xF;
+	uint8 predictNumber = nextSample[0] >> 4;
+	uint8 flags = nextSample[1];
+	assert(predictNumber < 5);
 
 	//Get intermediate values
 	{
 		unsigned int workBufferPtr = 0;
 		for(unsigned int i = 2; i < 16; i++)
 		{
-			uint8 sampleByte = m_nextSample[i];
+			uint8 sampleByte = nextSample[i];
 			int16 firstSample = ((sampleByte & 0x0F) << 12);
 			int16 secondSample = ((sampleByte & 0xF0) << 8);
 			firstSample >>= shiftFactor;
@@ -941,7 +1034,7 @@ void CSpuBase::CSampleReader::UnpackSamples(int16* dst)
 			{  122,		-60		},
 		};
 
-		for(unsigned int i = 0; i < 28; i++)
+		for(unsigned int i = 0; i < BUFFER_SAMPLES; i++)
 		{
 			int32 currentValue = workBuffer[i] * 64;
 			currentValue += (m_s1 * predictorTable[predictNumber][0]) / 64;
@@ -957,11 +1050,13 @@ void CSpuBase::CSampleReader::UnpackSamples(int16* dst)
 
 	if(flags & 0x04)
 	{
-		m_repeat = m_nextSample;
+		m_repeatAddr = m_nextSampleAddr;
 		m_didChangeRepeat = true;
 	}
 
-	m_nextSample += 0x10;
+	m_nextSampleAddr += 0x10;
+	assert(m_nextSampleAddr < m_ramSize);
+	m_nextSampleAddr &= (m_ramSize - 1);
 
 	if(flags & 0x01)
 	{
@@ -969,7 +1064,7 @@ void CSpuBase::CSampleReader::UnpackSamples(int16* dst)
 
 		if(flags == 0x03)
 		{
-			m_nextSample = m_repeat;
+			m_nextSampleAddr = m_repeatAddr;
 		}
 		else
 		{
@@ -978,19 +1073,24 @@ void CSpuBase::CSampleReader::UnpackSamples(int16* dst)
 	}
 }
 
-uint8* CSpuBase::CSampleReader::GetRepeat() const
+uint32 CSpuBase::CSampleReader::GetRepeat() const
 {
-	return m_repeat;
+	return m_repeatAddr;
 }
 
-void CSpuBase::CSampleReader::SetRepeat(uint8* repeat)
+void CSpuBase::CSampleReader::SetRepeat(uint32 repeatAddr)
 {
-	m_repeat = repeat;
+	m_repeatAddr = repeatAddr;
 }
 
-uint8* CSpuBase::CSampleReader::GetCurrent() const
+uint32 CSpuBase::CSampleReader::GetCurrent() const
 {
-	return m_nextSample;
+	return m_nextSampleAddr;
+}
+
+void CSpuBase::CSampleReader::SetIrqAddress(uint32 irqAddr)
+{
+	m_irqAddr = irqAddr;
 }
 
 bool CSpuBase::CSampleReader::IsDone() const
@@ -1006,6 +1106,16 @@ bool CSpuBase::CSampleReader::GetEndFlag() const
 void CSpuBase::CSampleReader::ClearEndFlag()
 {
 	m_endFlag = false;
+}
+
+bool CSpuBase::CSampleReader::GetIrqPending() const
+{
+	return m_irqPending;
+}
+
+void CSpuBase::CSampleReader::ClearIrqPending()
+{
+	m_irqPending = false;
 }
 
 bool CSpuBase::CSampleReader::DidChangeRepeat() const

@@ -63,12 +63,20 @@ namespace Iop
 			MODULE_ID = 0x80000400,
 		};
 
+		enum RETURN_CODES
+		{
+			RET_OK					= 0,
+			RET_NO_ENTRY			= -4,
+			RET_PERMISSION_DENIED	= -5
+		};
+
 		enum OPEN_FLAGS
 		{
 			OPEN_FLAG_RDONLY	= 0x00000001,
 			OPEN_FLAG_WRONLY	= 0x00000002,
 			OPEN_FLAG_RDWR		= 0x00000003,
 			OPEN_FLAG_CREAT		= 0x00000200,
+			OPEN_FLAG_TRUNC		= 0x00000400,
 		};
 
 		enum

@@ -7,24 +7,27 @@
 
 using namespace ISO9660;
 
-CISO9660::CISO9660(Framework::CStream* stream)
-: m_stream(stream)
-, m_volumeDescriptor(stream)
-, m_pathTable(stream, m_volumeDescriptor.GetLPathTableAddress())
+CISO9660::CISO9660(const BlockProviderPtr& blockProvider)
+: m_blockProvider(blockProvider)
+, m_volumeDescriptor(blockProvider.get())
+, m_pathTable(blockProvider.get(), m_volumeDescriptor.GetLPathTableAddress())
 {
 
 }
 
 CISO9660::~CISO9660()
 {
-	delete m_stream;
+
 }
 
 void CISO9660::ReadBlock(uint32 address, void* data)
 {
-	//Caching mechanism?
-	m_stream->Seek(static_cast<uint64>(address) * BLOCKSIZE, Framework::STREAM_SEEK_SET);
-	m_stream->Read(data, BLOCKSIZE);
+	//The buffer is needed to make sure exception handlers
+	//are properly called as some system calls (ie.: ReadFile)
+	//won't generate an exception when trying to write to
+	//a write protected area
+	m_blockProvider->ReadBlock(address, m_blockBuffer);
+	memcpy(data, m_blockBuffer, CBlockProvider::BLOCKSIZE);
 }
 
 bool CISO9660::GetFileRecord(CDirectoryRecord* record, const char* filename)
@@ -57,7 +60,7 @@ bool CISO9660::GetFileRecord(CDirectoryRecord* record, const char* filename)
 
 bool CISO9660::GetFileRecordFromDirectory(CDirectoryRecord* record, uint32 address, const char* filename)
 {
-	CFile directory(this, address * BLOCKSIZE, ULLONG_MAX - (address * BLOCKSIZE));
+	CFile directory(m_blockProvider.get(), address * CBlockProvider::BLOCKSIZE);
 
 	while(1)
 	{
@@ -79,7 +82,7 @@ Framework::CStream* CISO9660::Open(const char* filename)
 
 	if(GetFileRecord(&record, filename))
 	{
-		return new CFile(this, static_cast<uint64>(record.GetPosition()) * BLOCKSIZE, record.GetDataLength());
+		return new CFile(m_blockProvider.get(), static_cast<uint64>(record.GetPosition()) * CBlockProvider::BLOCKSIZE, record.GetDataLength());
 	}
 
 	return nullptr;

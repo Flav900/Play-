@@ -98,6 +98,12 @@ bool CLoadcore::Invoke(uint32 method, uint32* args, uint32 argsSize, uint32* ret
 		LoadModuleFromMemory(args, argsSize, ret, retSize);
 		return false;	//Block EE till module is loaded
 		break;
+	case 0x07:
+		return StopModule(args, argsSize, ret, retSize);
+		break;
+	case 0x08:
+		UnloadModule(args, argsSize, ret, retSize);
+		break;
 	case 0x09:
 		SearchModuleByName(args, argsSize, ret, retSize);
 		break;
@@ -156,12 +162,27 @@ bool CLoadcore::LoadModule(uint32* args, uint32 argsSize, uint32* ret, uint32 re
 	//Load the module
 	CLog::GetInstance().Print(LOG_NAME, "Request to load module '%s' received with %d bytes arguments payload.\r\n", moduleName, moduleArgsSize);
 
-	bool loadResult = m_bios.LoadAndStartModule(moduleName, moduleArgs, moduleArgsSize);
+	//HACK: This is needed to make 'doom.elf' read input properly
+	if(
+		!strcmp(moduleName, "rom0:XSIO2MAN") || 
+		!strcmp(moduleName, "rom0:XPADMAN") ||
+		!strcmp(moduleName, "rom0:XMTAPMAN")
+		)
+	{
+		ret[0] = 0;
+		return true;
+	}
+
+	auto moduleId = m_bios.LoadModule(moduleName);
+	if(moduleId >= 0)
+	{
+		moduleId = m_bios.StartModule(moduleId, moduleName, moduleArgs, moduleArgsSize);
+	}
 
 	//This function returns something negative upon failure
-	ret[0] = 0x00000000;
+	ret[0] = moduleId;
 
-	if(loadResult)
+	if(moduleId >= 0)
 	{
 		//Block EE till the IOP has completed the operation and sends its reply to the EE
 		return false;
@@ -204,8 +225,53 @@ void CLoadcore::LoadModuleFromMemory(uint32* args, uint32 argsSize, uint32* ret,
 	const char* moduleArgs = reinterpret_cast<const char*>(args) + 8 + PATH_MAX_SIZE;
 	uint32 moduleArgsSize = args[1];
 	CLog::GetInstance().Print(LOG_NAME, "Request to load module at 0x%0.8X received with %d bytes arguments payload.\r\n", args[0], moduleArgsSize);
-	m_bios.LoadAndStartModule(args[0], moduleArgs, moduleArgsSize);
-	ret[0] = 0x00000000;
+	auto moduleId = m_bios.LoadModule(args[0]);
+	if(moduleId >= 0)
+	{
+		moduleId = m_bios.StartModule(moduleId, "", moduleArgs, moduleArgsSize);
+	}
+	ret[0] = moduleId;
+}
+
+bool CLoadcore::StopModule(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize)
+{
+	char moduleArgs[ARGS_MAX_SIZE];
+
+	assert(argsSize == 512);
+	assert(retSize >= 4);
+
+	uint32 moduleId = args[0];
+	uint32 moduleArgsSize = args[1];
+
+	memcpy(moduleArgs, reinterpret_cast<const char*>(args) + 8 + PATH_MAX_SIZE, ARGS_MAX_SIZE);
+
+	CLog::GetInstance().Print(LOG_NAME, "StopModule(moduleId = %d, args, argsSize = 0x%0.8X);\r\n", 
+		moduleId, moduleArgsSize);
+
+	auto result = m_bios.StopModule(moduleId);
+	ret[0] = result;
+
+	if(result >= 0)
+	{
+		return false;
+	}
+	else
+	{
+		return true;
+	}
+}
+
+void CLoadcore::UnloadModule(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize)
+{
+	assert(argsSize == 4);
+	assert(retSize >= 4);
+
+	uint32 moduleId = args[0];
+
+	CLog::GetInstance().Print(LOG_NAME, "UnloadModule(moduleId = %d);\r\n", moduleId);
+
+	auto result = m_bios.UnloadModule(moduleId);
+	ret[0] = result;
 }
 
 void CLoadcore::SearchModuleByName(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize)
@@ -215,16 +281,8 @@ void CLoadcore::SearchModuleByName(uint32* args, uint32 argsSize, uint32* ret, u
 
 	const char* moduleName = reinterpret_cast<const char*>(args) + 8;
 	CLog::GetInstance().Print(LOG_NAME, "SearchModuleByName('%s');\r\n", moduleName);
-
-	if(m_bios.IsModuleLoaded(moduleName))
-	{
-		//Supposed to return some kind of id here...
-		ret[0] = 0x01234567;
-	}
-	else
-	{
-		ret[0] = -1;
-	}
+	auto moduleId = m_bios.SearchModuleByName(moduleName);
+	ret[0] = moduleId;
 }
 
 void CLoadcore::Initialize(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize)

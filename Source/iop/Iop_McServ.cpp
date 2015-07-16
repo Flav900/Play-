@@ -95,11 +95,13 @@ void CMcServ::GetInfo(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize
 {
 	assert(argsSize >= 0x1C);
 
+	//The layout of this can actually vary according to the version of the
+	//MCSERV module currently loaded
 	uint32 port			= args[1];
 	uint32 slot			= args[2];
-	bool wantType		= args[3] != 0;
+	bool wantFormatted	= args[3] != 0;
 	bool wantFreeSpace	= args[4] != 0;
-	bool wantFormatted	= args[5] != 0;
+	bool wantType		= args[5] != 0;
 	uint32* retBuffer	= reinterpret_cast<uint32*>(&ram[args[7]]);
 
 	CLog::GetInstance().Print(LOG_NAME, "GetInfo(port = %i, slot = %i, wantType = %i, wantFreeSpace = %i, wantFormatted = %i, retBuffer = 0x%0.8X);\r\n",
@@ -107,7 +109,7 @@ void CMcServ::GetInfo(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize
 
 	if(wantType)
 	{
-		retBuffer[0x00] = 2;
+		retBuffer[0x00] = 2;		//2 -> PS2 memory card
 	}
 	if(wantFreeSpace)
 	{
@@ -185,6 +187,7 @@ void CMcServ::Open(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize, u
 			break;
 		case (OPEN_FLAG_CREAT | OPEN_FLAG_WRONLY):
 		case (OPEN_FLAG_CREAT | OPEN_FLAG_RDWR):
+		case (OPEN_FLAG_TRUNC | OPEN_FLAG_CREAT | OPEN_FLAG_RDWR):
 			access = "wb";
 			break;
 		}
@@ -210,8 +213,8 @@ void CMcServ::Open(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize, u
 		}
 		catch(...)
 		{
-			//-4 for not existing file?
-			ret[0] = -4;
+			//Not existing file?
+			ret[0] = RET_NO_ENTRY;
 			return;
 		}
 	}
@@ -310,7 +313,7 @@ void CMcServ::Write(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize, 
 	auto file = GetFileFromHandle(cmd->handle);
 	if(file == nullptr)
 	{
-		ret[0] = -1;
+		ret[0] = RET_PERMISSION_DENIED;
 		assert(0);
 		return;
 	}
@@ -365,7 +368,14 @@ void CMcServ::ChDir(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize, 
 
 		if(!requestedDirectory.root_directory().empty())
 		{
-			newCurrentDirectory = requestedDirectory;
+			if(requestedDirectory.string() != "/")
+			{
+				newCurrentDirectory = requestedDirectory;
+			}
+			else
+			{
+				newCurrentDirectory.clear();
+			}
 		}
 		else
 		{
@@ -383,7 +393,7 @@ void CMcServ::ChDir(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize, 
 		else
 		{
 			//Not found (I guess)
-			result = -4;
+			result = RET_NO_ENTRY;
 		}
 	}
 	catch(const std::exception& exception)
@@ -428,7 +438,7 @@ void CMcServ::GetDir(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize,
 			if(!filesystem::exists(mcPath))
 			{
 				//Directory doesn't exist
-				ret[0] = -4;
+				ret[0] = RET_NO_ENTRY;
 				return;
 			}
 
@@ -437,7 +447,7 @@ void CMcServ::GetDir(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize,
 			if(!filesystem::exists(searchPath))
 			{
 				//Specified directory doesn't exist, this is an error
-				ret[0] = -4;
+				ret[0] = RET_NO_ENTRY;
 				return;
 			}
 
@@ -481,7 +491,7 @@ void CMcServ::Delete(uint32* args, uint32 argsSize, uint32* ret, uint32 retSize,
 	}
 	else
 	{
-		ret[0] = -1;
+		ret[0] = RET_NO_ENTRY;
 	}
 }
 
@@ -571,7 +581,7 @@ void CMcServ::CPathFinder::Search(const boost::filesystem::path& basePath, const
 		std::string filterExpString = filterPathString;
 		boost::replace_all(filterExpString, "\\", "\\\\");
 		boost::replace_all(filterExpString, ".", "\\.");
-		boost::replace_all(filterExpString, "?", ".");
+		boost::replace_all(filterExpString, "?", ".?");
 		boost::replace_all(filterExpString, "*", ".*");
 		m_filterExp = std::regex(filterExpString);
 	}
@@ -625,6 +635,7 @@ unsigned int CMcServ::CPathFinder::Read(ENTRY* entry, unsigned int size)
 
 void CMcServ::CPathFinder::SearchRecurse(const filesystem::path& path)
 {
+	bool found = false;
 	filesystem::directory_iterator endIterator;
 
 	for(filesystem::directory_iterator elementIterator(path);
@@ -674,9 +685,10 @@ void CMcServ::CPathFinder::SearchRecurse(const filesystem::path& path)
 			entry.creationTime = entry.modificationTime;
 
 			m_entries.push_back(entry);
+			found = true;
 		}
 
-		if(filesystem::is_directory(*elementIterator))
+		if(filesystem::is_directory(*elementIterator) && !found)
 		{
 			SearchRecurse(*elementIterator);
 		}

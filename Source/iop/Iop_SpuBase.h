@@ -1,9 +1,8 @@
-#ifndef _IOP_SPUBASE_H_
-#define _IOP_SPUBASE_H_
+#pragma once
 
 #include "Types.h"
 #include "BasicUnion.h"
-#include "convertible.h"
+#include "Convertible.h"
 #include "zip/ZipArchiveWriter.h"
 #include "zip/ZipArchiveReader.h"
 
@@ -74,8 +73,19 @@ namespace Iop
 		{
 			CONTROL_REVERB		= 0x80,
 			CONTROL_IRQ			= 0x40,
+
 			CONTROL_DMA			= 0x30,
-			CONTROL_DMA_READ	= 0x20,
+			CONTROL_DMA_IO		= 0x10,
+			CONTROL_DMA_WRITE	= 0x20,
+			CONTROL_DMA_READ	= 0x30,
+		};
+
+		enum TRANSFER_MODE
+		{
+			TRANSFER_MODE_VOICE			= 0,
+			TRANSFER_MODE_BLOCK_CORE0IN	= 1,
+			TRANSFER_MODE_BLOCK_CORE1IN	= 2,
+			TRANSFER_MODE_BLOCK_READ	= 4
 		};
 
 		enum
@@ -155,14 +165,15 @@ namespace Iop
 		void			SetVolumeAdjust(float);
 		void			SetReverbEnabled(bool);
 
-		void			SetStreamingEnabled(bool);
-
 		void			SetBaseSamplingRate(uint32);
 
 		bool			GetIrqPending() const;
 
 		uint32			GetIrqAddress() const;
 		void			SetIrqAddress(uint32);
+
+		uint16			GetTransferMode() const;
+		void			SetTransferMode(uint16);
 
 		uint32			GetTransferAddress() const;
 		void			SetTransferAddress(uint32);
@@ -214,16 +225,20 @@ namespace Iop
 			virtual			~CSampleReader();
 
 			void			Reset();
+			void			SetMemory(uint8*, uint32);
 
-			void			SetParams(uint8*, uint8*);
+			void			SetParams(uint32, uint32);
 			void			SetPitch(uint32, uint16);
 			void			GetSamples(int16*, unsigned int, unsigned int);
-			uint8*			GetRepeat() const;
-			void			SetRepeat(uint8*);
-			uint8*			GetCurrent() const;
+			uint32			GetRepeat() const;
+			void			SetRepeat(uint32);
+			uint32			GetCurrent() const;
+			void			SetIrqAddress(uint32);
 			bool			IsDone() const;
 			bool			GetEndFlag() const;
 			void			ClearEndFlag();
+			bool			GetIrqPending() const;
+			void			ClearIrqPending();
 
 			bool			DidChangeRepeat() const;
 			void			ClearDidChangeRepeat();
@@ -238,10 +253,14 @@ namespace Iop
 			void			AdvanceBuffer();
 			int16			GetSample(unsigned int);
 
+			uint8*			m_ram = nullptr;
+			uint32			m_ramSize = 0;
+
 			uint32			m_srcSampleIdx;
 			unsigned int	m_srcSamplingRate;
-			uint8*			m_nextSample;
-			uint8*			m_repeat;
+			uint32			m_nextSampleAddr = 0;
+			uint32			m_repeatAddr = 0;
+			uint32			m_irqAddr = 0;
 			int16			m_buffer[BUFFER_SAMPLES * 2];
 			uint16			m_pitch;
 			int32			m_s1;
@@ -249,6 +268,7 @@ namespace Iop
 			bool			m_done;
 			bool			m_nextValid;
 			bool			m_endFlag;
+			bool			m_irqPending = false;
 			bool			m_didChangeRepeat;
 		};
 
@@ -276,7 +296,8 @@ namespace Iop
 		uint32				m_baseSamplingRate;
 		uint32				m_irqAddr = 0;
 		bool				m_irqPending = false;
-		uint32				m_bufferAddr;
+		uint16				m_transferMode;
+		uint32				m_transferAddr;
 		UNION32_16			m_channelOn;
 		UNION32_16			m_channelReverb;
 		uint32				m_reverbWorkAddrStart;
@@ -289,9 +310,6 @@ namespace Iop
 		CSampleReader		m_reader[MAX_CHANNEL];
 		uint32				m_adsrLogTable[160];
 		bool				m_reverbEnabled;
-		bool				m_streamingEnabled;
 		float				m_volumeAdjust;
 	};
 }
-
-#endif

@@ -11,8 +11,6 @@ namespace Iop
 	class CCdvdfsv : public CModule
 	{
 	public:
-		typedef std::function<void (uint32, uint32)> ReadToEeRamHandler;
-
 							CCdvdfsv(CSifMan&, uint8*);
 		virtual				~CCdvdfsv();
 
@@ -22,7 +20,6 @@ namespace Iop
 
 		void				ProcessCommands(CSifMan*);
 		void				SetIsoImage(CISO9660*);
-		void				SetReadToEeRamHandler(const ReadToEeRamHandler&);
 
 		enum MODULE_ID
 		{
@@ -72,7 +69,5 @@ namespace Iop
 		CSifModuleAdapter	m_module597;
 		CSifModuleAdapter	m_module59A;
 		CSifModuleAdapter	m_module59C;
-
-		ReadToEeRamHandler	m_readToEeRamHandler;
 	};
 }

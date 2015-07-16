@@ -6,9 +6,9 @@
 #include "MIPS.h"
 #include "MailBox.h"
 #include "PadHandler.h"
-#include "iso9660/ISO9660.h"
+#include "ISO9660/ISO9660.h"
 #include "VirtualMachine.h"
-#include "Ee_SubSystem.h"
+#include "ee/Ee_SubSystem.h"
 #include "iop/Iop_SubSystem.h"
 #include "iop/IopBios.h"
 #include "../tools/PsfPlayer/Source/SoundHandler.h"
@@ -66,6 +66,7 @@ public:
 	void						DestroyGSHandler();
 
 	void						CreatePadHandler(const CPadHandler::FactoryFunction&);
+	CPadHandler*				GetPadHandler();
 	void						DestroyPadHandler();
 
 	void						CreateSoundHandler(const CSoundHandler::FactoryFunction&);
@@ -89,18 +90,17 @@ public:
 
 	IopBiosPtr					m_iopOs;
 
-	CISO9660*					m_pCDROM0;
-
 	ProfileFrameDoneSignal		ProfileFrameDone;
 
 private:
+	typedef std::unique_ptr<CISO9660> Iso9660Ptr;
+
 	void						CreateVM();
 	void						ResetVM();
 	void						DestroyVM();
 	void						SaveVMState(const char*, unsigned int&);
 	void						LoadVMState(const char*, unsigned int&);
 
-	void						ReadToEeRam(uint32, uint32);
 	void						ReloadExecutable(const char*, const CPS2OS::ArgumentList&);
 
 	void						ResumeImpl();
@@ -119,6 +119,7 @@ private:
 	void						OnGsNewFrame();
 
 	void						CDROM0_Initialize();
+	Framework::CStream*			CDROM0_CreateImageStream(const char*);
 	void						CDROM0_Mount(const char*);
 	void						CDROM0_Reset();
 	void						CDROM0_Destroy();
@@ -148,6 +149,8 @@ private:
 	FrameDumpCallback			m_frameDumpCallback;
 	std::mutex					m_frameDumpCallbackMutex;
 	bool						m_dumpingFrame = false;
+
+	Iso9660Ptr					m_cdrom0;
 
 	enum
 	{

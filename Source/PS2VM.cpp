@@ -1,17 +1,14 @@
 #include <stdio.h>
 #include <exception>
-#include <boost/filesystem/path.hpp>
-#include <boost/filesystem/operations.hpp>
+#include <boost/filesystem.hpp>
 #include <memory>
 #include <fenv.h>
 #include "make_unique.h"
 #include "PS2VM.h"
 #include "PS2VM_Preferences.h"
-#include "PS2OS.h"
+#include "ee/PS2OS.h"
 #include "Ps2Const.h"
 #include "iop/Iop_SifManPs2.h"
-#include "VIF.h"
-#include "Timer.h"
 #include "PtrMacro.h"
 #include "StdStream.h"
 #include "GZipStream.h"
@@ -19,6 +16,9 @@
 #include "VolumeStream.h"
 #else
 #include "Posix_VolumeStream.h"
+#endif
+#ifdef __ANDROID__
+#include "PosixFileStream.h"
 #endif
 #include "stricmp.h"
 #include "CsoImageStream.h"
@@ -35,12 +35,9 @@
 #include "iop/DirectoryDevice.h"
 #include "iop/IsoDevice.h"
 #include "Log.h"
+#include "ISO9660/BlockProvider.h"
 
 #define LOG_NAME		("ps2vm")
-
-#ifdef DEBUGGER_INCLUDED
-#define TAGS_PATH		("./tags/")
-#endif
 
 #define PREF_PS2_HOST_DIRECTORY_DEFAULT		("vfs/host")
 #define PREF_PS2_MC0_DIRECTORY_DEFAULT		("vfs/mc0")
@@ -69,7 +66,6 @@ CPS2VM::CPS2VM()
 , m_eeExecutionTicks(0)
 , m_iopExecutionTicks(0)
 , m_spuUpdateTicks(SPU_UPDATE_TICKS)
-, m_pCDROM0(NULL)
 , m_eeProfilerZone(CProfiler::GetInstance().RegisterZone("EE"))
 , m_iopProfilerZone(CProfiler::GetInstance().RegisterZone("IOP"))
 , m_spuProfilerZone(CProfiler::GetInstance().RegisterZone("SPU"))
@@ -136,6 +132,11 @@ void CPS2VM::CreatePadHandler(const CPadHandler::FactoryFunction& factoryFunctio
 {
 	if(m_pad != nullptr) return;
 	m_mailBox.SendCall(std::bind(&CPS2VM::CreatePadHandlerImpl, this, factoryFunction), true);
+}
+
+CPadHandler* CPS2VM::GetPadHandler()
+{
+	return m_pad;
 }
 
 void CPS2VM::DestroyPadHandler()
@@ -289,14 +290,14 @@ void CPS2VM::TriggerFrameDump(const FrameDumpCallback& frameDumpCallback)
 #define TAGS_SECTION_IOP_FUNCTIONS	("functions")
 #define TAGS_SECTION_IOP_COMMENTS	("comments")
 
+#define TAGS_PATH		("tags/")
+
 std::string CPS2VM::MakeDebugTagsPackagePath(const char* packageName)
 {
-	filesystem::path tagsPath(TAGS_PATH);
-	if(!filesystem::exists(tagsPath))
-	{
-		filesystem::create_directory(tagsPath);
-	}
-	return std::string(TAGS_PATH) + std::string(packageName) + std::string(".tags.xml");
+	auto tagsPath = CAppConfig::GetBasePath() / boost::filesystem::path(TAGS_PATH);
+	Framework::PathUtils::EnsurePathExists(tagsPath);
+	auto tagsPackagePath = tagsPath / (std::string(packageName) + std::string(".tags.xml"));
+	return tagsPackagePath.string();
 }
 
 void CPS2VM::LoadDebugTags(const char* packageName)
@@ -387,11 +388,9 @@ void CPS2VM::ResetVM()
 	m_iopOs->GetIoman()->RegisterDevice("host", Iop::CIoman::DevicePtr(new Iop::Ioman::CDirectoryDevice(PREF_PS2_HOST_DIRECTORY)));
 	m_iopOs->GetIoman()->RegisterDevice("mc0", Iop::CIoman::DevicePtr(new Iop::Ioman::CDirectoryDevice(PREF_PS2_MC0_DIRECTORY)));
 	m_iopOs->GetIoman()->RegisterDevice("mc1", Iop::CIoman::DevicePtr(new Iop::Ioman::CDirectoryDevice(PREF_PS2_MC1_DIRECTORY)));
-	m_iopOs->GetIoman()->RegisterDevice("cdrom0", Iop::CIoman::DevicePtr(new Iop::Ioman::CIsoDevice(m_pCDROM0)));
+	m_iopOs->GetIoman()->RegisterDevice("cdrom0", Iop::CIoman::DevicePtr(new Iop::Ioman::CIsoDevice(m_cdrom0)));
 
 	m_iopOs->GetLoadcore()->SetLoadExecutableHandler(std::bind(&CPS2OS::LoadExecutable, m_ee->m_os, std::placeholders::_1, std::placeholders::_2));
-
-	m_iopOs->GetCdvdfsv()->SetReadToEeRamHandler(std::bind(&CPS2VM::ReadToEeRam, this, std::placeholders::_1, std::placeholders::_2));
 
 	m_vblankTicks = ONSCREEN_TICKS;
 	m_inVblank = false;
@@ -507,7 +506,7 @@ void CPS2VM::ResumeImpl()
 #ifdef DEBUGGER_INCLUDED
 	m_ee->m_executor.DisableBreakpointsOnce();
 	m_iop->m_executor.DisableBreakpointsOnce();
-	m_ee->m_vif.DisableVu1BreakpointsOnce();
+	m_ee->m_vpu1->DisableBreakpointsOnce();
 #endif
 	m_nStatus = RUNNING;
 }
@@ -546,7 +545,7 @@ void CPS2VM::OnGsNewFrame()
 {
 #ifdef DEBUGGER_INCLUDED
 	std::unique_lock<std::mutex> dumpFrameCallbackMutexLock(m_frameDumpCallbackMutex);
-	if(m_dumpingFrame)
+	if(m_dumpingFrame && !m_frameDump.GetPackets().empty())
 	{
 		m_ee->m_gs->SetFrameDump(nullptr);
 		m_frameDumpCallback(m_frameDump);
@@ -661,13 +660,22 @@ void CPS2VM::UpdateSpu()
 void CPS2VM::CDROM0_Initialize()
 {
 	CAppConfig::GetInstance().RegisterPreferenceString(PS2VM_CDROM0PATH, "");
-	m_pCDROM0 = NULL;
+	m_cdrom0.reset();
 }
 
 void CPS2VM::CDROM0_Reset()
 {
-	DELETEPTR(m_pCDROM0);
+	m_cdrom0.reset();
 	CDROM0_Mount(CAppConfig::GetInstance().GetPreferenceString(PS2VM_CDROM0PATH));
+}
+
+Framework::CStream* CPS2VM::CDROM0_CreateImageStream(const char* path)
+{
+#ifdef __ANDROID__
+	return new Framework::CPosixFileStream(path, O_RDONLY);
+#else
+	return new Framework::CStdStream(path, "rb");
+#endif
 }
 
 void CPS2VM::CDROM0_Mount(const char* path)
@@ -680,7 +688,7 @@ void CPS2VM::CDROM0_Mount(const char* path)
 	{
 		try
 		{
-			Framework::CStream* stream = nullptr;
+			std::shared_ptr<Framework::CStream> stream;
 			const char* extension = "";
 			if(pathLength >= 4)
 			{
@@ -690,23 +698,23 @@ void CPS2VM::CDROM0_Mount(const char* path)
 			//Gotta think of something better than that...
 			if(!stricmp(extension, ".isz"))
 			{
-				stream = new CIszImageStream(new Framework::CStdStream(path, "rb"));
+				stream = std::make_shared<CIszImageStream>(CDROM0_CreateImageStream(path));
 			}
 			else if(!stricmp(extension, ".cso"))
 			{
-				stream = new CCsoImageStream(new Framework::CStdStream(path, "rb"));
+				stream = std::make_shared<CCsoImageStream>(CDROM0_CreateImageStream(path));
 			}
 #ifdef WIN32
 			else if(path[0] == '\\')
 			{
-				stream = new Framework::Win32::CVolumeStream(path[4]);
+				stream = std::make_shared<Framework::Win32::CVolumeStream>(path[4]);
 			}
-#elif !defined(__ANDROID__)
+#elif !defined(__ANDROID__) && !TARGET_OS_IPHONE && !TARGET_IPHONE_SIMULATOR
 			else
 			{
 				try
 				{
-					stream = new Framework::Posix::CVolumeStream(path);
+					stream = std::make_shared<Framework::Posix::CVolumeStream>(path);
 				}
 				catch(...)
 				{
@@ -717,13 +725,24 @@ void CPS2VM::CDROM0_Mount(const char* path)
 #endif
 
 			//If it's null after all that, just feed it to a StdStream
-			if(stream == nullptr)
+			if(!stream)
 			{
-				stream = new Framework::CStdStream(path, "rb");
+				stream = std::shared_ptr<Framework::CStream>(CDROM0_CreateImageStream(path));
 			}
 
-			m_pCDROM0 = new CISO9660(stream);
-			SetIopCdImage(m_pCDROM0);
+			try
+			{
+				auto blockProvider = std::make_shared<ISO9660::CBlockProvider2048>(stream);
+				m_cdrom0 = std::make_unique<CISO9660>(blockProvider);
+			}
+			catch(...)
+			{
+				//Failed with block size 2048, try with CD-ROM XA
+				auto blockProvider = std::make_shared<ISO9660::CBlockProviderCDROMXA>(stream);
+				m_cdrom0 = std::make_unique<CISO9660>(blockProvider);
+			}
+
+			SetIopCdImage(m_cdrom0.get());
 		}
 		catch(const std::exception& Exception)
 		{
@@ -736,8 +755,8 @@ void CPS2VM::CDROM0_Mount(const char* path)
 
 void CPS2VM::CDROM0_Destroy()
 {
-	SetIopCdImage(NULL);
-	DELETEPTR(m_pCDROM0);
+	SetIopCdImage(nullptr);
+	m_cdrom0.reset();
 }
 
 void CPS2VM::SetIopCdImage(CISO9660* image)
@@ -755,11 +774,6 @@ void CPS2VM::RegisterModulesInPadHandler()
 	m_pad->InsertListener(&m_iop->m_sio2);
 }
 
-void CPS2VM::ReadToEeRam(uint32 address, uint32 size)
-{
-	m_ee->m_executor.ClearActiveBlocksInRange(address, address + size);
-}
-
 void CPS2VM::ReloadExecutable(const char* executablePath, const CPS2OS::ArgumentList& arguments)
 {
 	ResetVM();
@@ -770,6 +784,7 @@ void CPS2VM::EmuThread()
 {
 	fesetround(FE_TOWARDZERO);
 	CProfiler::GetInstance().SetWorkThread();
+	m_ee->m_executor.AddExceptionHandler();
 	while(1)
 	{
 		while(m_mailBox.IsPending())
@@ -845,14 +860,14 @@ void CPS2VM::EmuThread()
 				UpdateEe();
 				UpdateIop();
 
-				m_ee->m_vif.ExecuteVu0(m_singleStepVu0);
-				m_ee->m_vif.ExecuteVu1(m_singleStepVu1);
+				m_ee->m_vpu0->Execute(m_singleStepVu0);
+				m_ee->m_vpu1->Execute(m_singleStepVu1);
 			}
 #ifdef DEBUGGER_INCLUDED
 			if(
 			   m_ee->m_executor.MustBreak() || 
 			   m_iop->m_executor.MustBreak() ||
-			   m_ee->m_vif.MustVu1Break() ||
+			   m_ee->m_vpu1->MustBreak() ||
 			   m_singleStepEe || m_singleStepIop || m_singleStepVu0 || m_singleStepVu1)
 			{
 				m_nStatus = PAUSED;
@@ -866,4 +881,5 @@ void CPS2VM::EmuThread()
 #endif
 		}
 	}
+	m_ee->m_executor.RemoveExceptionHandler();
 }
